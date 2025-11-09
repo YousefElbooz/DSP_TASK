@@ -871,7 +871,7 @@ def on_apply_dft():
     @stepsOfWorking
         1. Calls `load_signal_from_file_dialog` to get the signal.
         2. Prompts the user for the sampling frequency (`fs`) using a `simpledialog`.
-        3. Performs the DFT using `np.fft.fft()`.
+        3. Performs the DFT using a manual, O(N^2) nested-loop implementation.
         4. Calculates the corresponding frequencies, amplitudes, and phases.
         5. Stores all DFT results in the global `dft_data` dictionary.
         6. Normalizes the amplitudes (0 to 1) for plotting.
@@ -900,9 +900,32 @@ def on_apply_dft():
 
     N = len(samples)
     
-    # Perform DFT
-    X_k = np.fft.fft(samples)
-    frequencies = np.fft.fftfreq(N, d=1/fs)
+    # --- MODIFIED: Manual DFT Implementation ---
+    # Perform DFT using the direct formula: X[k] = sum(x[n] * e^(-j*2*pi*k*n/N))
+    # This is an O(N^2) operation and can be slow for large signals.
+    X_k = np.zeros(N, dtype=complex) # Array to store complex coefficients
+
+    print("Starting manual DFT calculation... (this may take a moment)")
+    # Loop over each frequency bin 'k'
+    for k in range(N):
+        sum_k = 0.0j # Initialize the sum for this k
+        # Loop over each time sample 'n'
+        for n in range(N):
+            # Calculate the complex exponential term
+            angle = -2 * np.pi * k * n / N
+            complex_exponential = np.exp(1j * angle) # e^(j * angle)
+            
+            # Add the sample's contribution
+            sum_k += samples[n] * complex_exponential
+            
+        # Store the final coefficient for frequency k
+        X_k[k] = sum_k
+    
+    print("DFT calculation complete.")
+    # --- END MODIFICATION ---
+
+    # We still use np.fft.fftfreq to get the frequency labels (in Hz) for the plot
+    frequencies = np.fft.fftfreq(N, d=1/fs) 
     amplitudes = np.abs(X_k)
     phases = np.angle(X_k)
     
@@ -915,7 +938,9 @@ def on_apply_dft():
     
     # Normalize amplitudes for plotting (0 to 1)
     max_amp = np.max(amplitudes)
+    print(max_amp)
     normalized_amplitudes = amplitudes / max_amp if max_amp > 0 else amplitudes
+    print(normalized_amplitudes)
     
     # Plot (using fftshift to center 0 Hz)
     plot_frequency_domain(np.fft.fftshift(frequencies),
@@ -926,6 +951,7 @@ def on_apply_dft():
     # Display dominant frequencies
     dominant_indices = np.where(normalized_amplitudes > 0.5)
     dominant_freqs = frequencies[dominant_indices]
+    print(dominant_freqs)
     
     if dominant_freqs.size > 0:
         freq_str = "\n".join([f"{f:.2f} Hz" for f in dominant_freqs])
@@ -949,7 +975,7 @@ def on_apply_idft_from_file():
         1. Opens a file dialog for the user to select an Amp/Phase file.
         2. Calls `read_amp_phase_file` to parse the file.
         3. Reconstructs the complex coefficients: `X_k = A * e^(j*P)`.
-        4. Performs the IDFT using `np.fft.ifft()`.
+        4. Performs the IDFT using a manual, O(N^2) nested-loop implementation.
         5. Takes the real part of the result (`np.real`) as the signal.
         6. Calls `plot_discrete` to display the reconstructed signal.
         7. Calls `update_last_result` to store the new time-domain signal.
@@ -979,18 +1005,38 @@ def on_apply_idft_from_file():
     # Reconstruct complex coefficients
     X_k = amplitudes * np.exp(1j * phases)
     
-    # Perform IDFT
-    reconstructed_samples = np.fft.ifft(X_k)
+    # --- MODIFIED: Manual IDFT Implementation ---
+    # Perform IDFT using the direct formula: x[n] = (1/N) * sum(X[k] * e^(j*2*pi*k*n/N))
+    # This is an O(N^2) operation.
+    reconstructed_samples_complex = np.zeros(N, dtype=complex) # Array to store complex samples
+
+    print("Starting manual IDFT calculation... (this may take a moment)")
+    # Loop over each time sample 'n'
+    for n in range(N):
+        sum_n = 0.0j # Initialize the sum for this n
+        # Loop over each frequency bin 'k'
+        for k in range(N):
+            # Calculate the complex exponential term (note the positive sign)
+            angle = 2 * np.pi * k * n / N
+            complex_exponential = np.exp(1j * angle) # e^(j * angle)
+            
+            # Add the coefficient's contribution
+            sum_n += X_k[k] * complex_exponential
+            
+        # Store the final sample for time n, scaled by 1/N
+        reconstructed_samples_complex[n] = sum_n / N
+    
+    print("IDFT calculation complete.")
+    # --- END MODIFICATION ---
     
     # Assume real signal
-    reconstructed_samples = np.real(reconstructed_samples)
+    reconstructed_samples = np.real(reconstructed_samples_complex)
     
     indices = np.arange(N)
     fs = N # Default Fs to N if not known
     
     plot_discrete(indices, reconstructed_samples, "Reconstructed Signal (from file)")
     update_last_result(indices, reconstructed_samples, fs)
-
 def on_modify_component():
     """
     @desc
@@ -1004,6 +1050,7 @@ def on_modify_component():
            showing the current values as defaults.
         5. Updates the `dft_data["complex_coeffs"][k]` with the new
            complex value.
+        6. Calls `on_reconstruct_from_dft` to plot the updated signal.
     @param
         None.
     @return
@@ -1041,10 +1088,16 @@ def on_modify_component():
     if new_phase is None:
         return
         
+    print(dft_data);
     # Update the complex coefficient
     dft_data["complex_coeffs"][k] = new_amp * np.exp(1j * new_phase)
-    messagebox.showinfo("Success", f"Component {k} has been updated.")
+    print(dft_data);
 
+    messagebox.showinfo("Success", f"Component {k} has been updated. Reconstructing signal...")
+    
+    # --- MODIFICATION: Plot the signal after updation ---
+    on_reconstruct_from_dft()
+    # --- END MODIFICATION ---
 def on_remove_dc():
     """
     @desc
